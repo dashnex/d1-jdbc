@@ -111,6 +111,17 @@ class D1ClientTest {
     }
 
     @Test
+    void sqlErrorWithHttp403IsMappedByMessageNotTreatedAsAuthFailure() {
+        // F9: D1 can return a SQL error (code 7500) on an HTTP 403 response; it must still be classified
+        // by its message (constraint/syntax/etc.), not swallowed by the 401/403 "bad token" branch.
+        stub.enqueue(error(403, 7500, "UNIQUE constraint failed: t.e: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)"));
+        SQLException e = assertThrows(SQLException.class, () -> client.execute("INSERT INTO t VALUES (1)", List.of()));
+        assertEquals("23000", e.getSQLState());
+        assertEquals(7500, e.getErrorCode());
+        assertTrue(e.getMessage().contains("UNIQUE constraint failed"));
+    }
+
+    @Test
     void retries429ThenSucceeds() throws SQLException {
         stub.enqueue(error(429, 971, "rate limited"));
         stub.enqueue(ok(empty(1, 5)));

@@ -20,6 +20,11 @@ final class D1Errors {
         if (message == null || message.isEmpty()) {
             message = "HTTP " + status;
         }
+        if (code == 7500) {
+            // A SQL error (D1's generic SQL-error code) — classify by message even if the HTTP status
+            // happens to be 401/403; it is not a rejected API token.
+            return new SQLException(message, sqlState(message), code);
+        }
         if (status == 401 || status == 403 || code == 10000) {
             return new SQLException("Cloudflare rejected the API token (it needs the Account → D1 → Edit permission): "
                     + message, "28000", code);
