@@ -112,6 +112,29 @@ class D1StatementTest {
     }
 
     @Test
+    void maxRowsIsPushedDownAsLimit() throws SQLException {
+        // F2: IDEs page grids with setMaxRows; pushing LIMIT down avoids downloading everything.
+        stub.handler(r -> r.sql().contains("pragma_table_info")
+                ? ok(result(new String[]{"name", "type"}, new Object[][]{{"id", "INTEGER"}}))
+                : ok(result(new String[]{"id"}, new Object[][]{{1}})));
+        try (Statement st = conn.createStatement()) {
+            st.setMaxRows(200);
+            st.executeQuery("SELECT * FROM users");
+        }
+        assertEquals("SELECT * FROM (SELECT * FROM users) LIMIT 200", stub.requests().get(1).sql());
+    }
+
+    @Test
+    void maxRowsIsNotPushedDownForWrites() throws SQLException {
+        stub.enqueue(ok(empty(1, 5)));
+        try (Statement st = conn.createStatement()) {
+            st.setMaxRows(200);
+            st.executeUpdate("INSERT INTO t(a) VALUES ('x')");
+        }
+        assertEquals("INSERT INTO t(a) VALUES ('x')", stub.lastRequest().sql());
+    }
+
+    @Test
     void transactionControlIsIgnoredWithWarning() throws SQLException {
         try (Statement st = conn.createStatement()) {
             assertFalse(st.execute("BEGIN TRANSACTION"));

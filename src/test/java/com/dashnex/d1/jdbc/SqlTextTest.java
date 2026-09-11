@@ -39,6 +39,12 @@ class SqlTextTest {
         assertTrue(SqlText.isDdl("ALTER TABLE t ADD COLUMN c TEXT"));
         assertTrue(SqlText.isDdl("create index i on t(a)"));
         assertFalse(SqlText.isDdl("SELECT created FROM t"));
+        assertTrue(SqlText.isSelect("  select * from t"));
+        assertTrue(SqlText.isSelect("VALUES (1), (2)"));
+        assertFalse(SqlText.isSelect("EXPLAIN SELECT 1"));
+        assertFalse(SqlText.isSelect("PRAGMA table_info(t)"));
+        assertFalse(SqlText.isSelect("SELECT 1; SELECT 2"));
+        assertFalse(SqlText.isSelect("INSERT INTO t VALUES (1)"));
     }
 
     @Test
