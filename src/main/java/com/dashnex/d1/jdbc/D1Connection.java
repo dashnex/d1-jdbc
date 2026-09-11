@@ -113,7 +113,7 @@ public class D1Connection implements Connection {
     @Override public void releaseSavepoint(Savepoint savepoint) throws SQLException { throw unsupported("Savepoints"); }
     @Override public void close() { closed = true; }
     @Override public boolean isClosed() { return closed; }
-    @Override public DatabaseMetaData getMetaData() throws SQLException { checkOpen(); throw unsupported("DatabaseMetaData (added in Task 6)"); }
+    @Override public DatabaseMetaData getMetaData() throws SQLException { checkOpen(); return new D1DatabaseMetaData(this); }
     @Override public void setReadOnly(boolean readOnly) { this.readOnly = readOnly; }
     @Override public boolean isReadOnly() { return readOnly; }
     @Override public void setCatalog(String catalog) { }
