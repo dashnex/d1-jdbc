@@ -132,6 +132,74 @@ class D1ClientTest {
     }
 
     @Test
+    void requestTimeoutIsNotRetried() throws Exception {
+        // F5: HttpTimeoutException is an IOException but must never be retried, even for read-only SQL
+        // (retrying a 30s-timeout query 3x would make a slow-but-alive D1 look hung for 2 minutes).
+        D1Client oneSecondClient = new D1Client(
+                D1ConnectionConfig.parse(stub.url() + "&timeoutSeconds=1", stub.credentials()), new long[]{1, 1, 1});
+        stub.handler(r -> {
+            sleep(3000);
+            return ok(result(new String[]{"1"}, new Object[][]{{1}}));
+        });
+        SQLException e = assertThrows(SQLException.class, () -> oneSecondClient.execute("SELECT 1", List.of()));
+        assertEquals("08006", e.getSQLState());
+        assertEquals(1, stub.requests().size());
+    }
+
+    @Test
+    void pingHonoursItsOwnTimeoutWithoutRetry() throws Exception {
+        stub.handler(r -> {
+            sleep(3000);
+            return ok(result(new String[]{"1"}, new Object[][]{{1}}));
+        });
+        SQLException e = assertThrows(SQLException.class, () -> client.ping(1));
+        assertEquals("08006", e.getSQLState());
+        assertEquals(1, stub.requests().size());
+    }
+
+    @Test
+    void pingSucceedsOnce() throws Exception {
+        stub.enqueue(ok(result(new String[]{"1"}, new Object[][]{{1}})));
+        client.ping(5);
+        assertEquals(1, stub.requests().size());
+    }
+
+    @Test
+    void shouldRetryIoClassifiesTimeoutsAndConnectExceptions() {
+        assertTrue(D1Client.shouldRetryIo(new java.net.ConnectException("refused"), false));
+        assertFalse(D1Client.shouldRetryIo(new java.io.IOException("boom"), false));
+        assertFalse(D1Client.shouldRetryIo(new java.net.http.HttpTimeoutException("slow"), true));
+        assertTrue(D1Client.shouldRetryIo(new java.io.IOException("boom"), true));
+        assertFalse(D1Client.shouldRetryIo(new java.net.http.HttpConnectTimeoutException("slow"), false));
+    }
+
+    @Test
+    void isValidRunsOnceBoundedByTimeoutAndWithoutRetry() throws Exception {
+        // F5: isValid(timeout) previously delegated to execute(), which retries read-only SQL up to 3x;
+        // a hung connection would take ~90s to report invalid instead of honouring the caller's timeout.
+        D1Connection connection = new D1Connection(D1ConnectionConfig.parse(
+                stub.url() + "&timeoutSeconds=1", stub.credentials()), new D1Client(
+                D1ConnectionConfig.parse(stub.url() + "&timeoutSeconds=1", stub.credentials()), new long[]{1, 1, 1}));
+        stub.handler(r -> {
+            sleep(3000);
+            return ok(result(new String[]{"1"}, new Object[][]{{1}}));
+        });
+        long start = System.nanoTime();
+        assertFalse(connection.isValid(1));
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+        assertTrue(elapsedMillis < 2500, "isValid should not retry; took " + elapsedMillis + "ms");
+        assertEquals(1, stub.requests().size());
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Test
     void resolvesDatabaseNameToUuid() throws SQLException {
         Properties creds = stub.credentials();
         D1Client byName = new D1Client(D1ConnectionConfig.parse(stub.url("my-db"), creds), new long[]{1});
