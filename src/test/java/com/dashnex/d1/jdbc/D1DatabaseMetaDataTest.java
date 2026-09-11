@@ -17,9 +17,29 @@ import static com.dashnex.d1.jdbc.StubD1Server.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class D1DatabaseMetaDataTest {
+    private static final String[] COLUMN_HEADERS =
+            {"tbl", "cid", "name", "type", "notnull", "dflt_value", "pk", "without_rowid"};
+    private static final Object[][] COLUMN_ROWS = {
+            {"kv", 0, "id", "INTEGER", 0, null, 1, 1},
+            {"order_summary", 0, "n", "", 0, null, 0, 0},
+            {"orders", 0, "id", "INTEGER", 0, null, 1, 0},
+            {"orders", 1, "user_id", "INTEGER", 1, null, 0, 0},
+            {"orders", 2, "total", "DECIMAL(10,2)", 0, "0", 0, 0},
+            {"users", 0, "id", "INTEGER", 0, null, 1, 0},
+            {"users", 1, "email", "VARCHAR(255)", 1, null, 0, 0},
+            {"users", 2, "created_at", "DATETIME", 0, "CURRENT_TIMESTAMP", 0, 0}};
+
     private StubD1Server stub;
     private Connection conn;
     private DatabaseMetaData md;
+
+    private static Object[][] columnsForTable(String table) {
+        List<Object[]> out = new ArrayList<>();
+        for (Object[] row : COLUMN_ROWS) {
+            if (((String) row[0]).equalsIgnoreCase(table)) out.add(row);
+        }
+        return out.toArray(new Object[0][]);
+    }
 
     @BeforeEach
     void setUp() throws Exception {
@@ -31,15 +51,11 @@ class D1DatabaseMetaDataTest {
                         {"orders", "table"}, {"order_summary", "view"}, {"users", "table"}}));
             }
             if (sql.equals(D1DatabaseMetaData.COLUMNS_SQL)) {
-                return ok(result(new String[]{"tbl", "cid", "name", "type", "notnull", "dflt_value", "pk", "without_rowid"}, new Object[][]{
-                        {"kv", 0, "id", "INTEGER", 0, null, 1, 1},
-                        {"order_summary", 0, "n", "", 0, null, 0, 0},
-                        {"orders", 0, "id", "INTEGER", 0, null, 1, 0},
-                        {"orders", 1, "user_id", "INTEGER", 1, null, 0, 0},
-                        {"orders", 2, "total", "DECIMAL(10,2)", 0, "0", 0, 0},
-                        {"users", 0, "id", "INTEGER", 0, null, 1, 0},
-                        {"users", 1, "email", "VARCHAR(255)", 1, null, 0, 0},
-                        {"users", 2, "created_at", "DATETIME", 0, "CURRENT_TIMESTAMP", 0, 0}}));
+                return ok(result(COLUMN_HEADERS, COLUMN_ROWS));
+            }
+            if (sql.equals(D1DatabaseMetaData.COLUMNS_FOR_TABLE_SQL) || sql.equals(D1DatabaseMetaData.COLUMNS_ONE_TABLE_FALLBACK_SQL)) {
+                String table = r.params().get(0).asText();
+                return ok(result(COLUMN_HEADERS, columnsForTable(table)));
             }
             if (sql.equals(D1DatabaseMetaData.FOREIGN_KEYS_SQL)) {
                 return ok(result(new String[]{"name", "id", "seq", "table", "from", "to", "on_update", "on_delete"}, new Object[][]{
@@ -215,5 +231,47 @@ class D1DatabaseMetaDataTest {
         assertEquals("NO", rs.getString("IS_AUTOINCREMENT"));
         assertEquals("YES", rs.getString("IS_NULLABLE"));
         assertFalse(rs.next());
+    }
+
+    @Test
+    void getPrimaryKeysForASpecificTableUsesTheSingleTableQuery() throws SQLException {
+        // F4: a request for one table's metadata must not run the all-tables COLUMNS_SQL,
+        // which a single broken view elsewhere could take down.
+        ResultSet rs = md.getPrimaryKeys(null, null, "users");
+        assertTrue(rs.next());
+        assertEquals("users", rs.getString("TABLE_NAME"));
+        assertEquals("id", rs.getString("COLUMN_NAME"));
+        assertFalse(rs.next());
+        assertEquals(D1DatabaseMetaData.COLUMNS_FOR_TABLE_SQL, stub.lastRequest().sql());
+        assertEquals("users", stub.lastRequest().params().get(0).asText());
+    }
+
+    @Test
+    void columnsFallBackToPerTableQueriesWhenAllTablesQueryFails() throws SQLException {
+        // F4: a view referencing a dropped table/column makes the joined pragma_table_info query
+        // fail for ALL tables; the driver must fall back to one query per table and skip only the
+        // broken one, instead of losing every table's column metadata.
+        stub.handler(r -> {
+            String sql = r.sql();
+            if (sql.equals(D1DatabaseMetaData.TABLES_SQL)) {
+                return ok(result(new String[]{"name", "type"}, new Object[][]{
+                        {"broken_view", "view"}, {"users", "table"}}));
+            }
+            if (sql.equals(D1DatabaseMetaData.COLUMNS_SQL)) {
+                return error(400, 7500, "no such column: missing: SQLITE_ERROR");
+            }
+            if (sql.equals(D1DatabaseMetaData.COLUMNS_ONE_TABLE_FALLBACK_SQL)) {
+                String table = r.params().get(0).asText();
+                if ("broken_view".equals(table)) {
+                    return error(400, 7500, "no such column: missing: SQLITE_ERROR");
+                }
+                return ok(result(COLUMN_HEADERS, columnsForTable(table)));
+            }
+            return ok(result(new String[]{"1"}, new Object[][]{{1}}));
+        });
+        ResultSet rs = md.getColumns(null, null, "%", "%");
+        List<String> tables = new ArrayList<>();
+        while (rs.next()) tables.add(rs.getString("TABLE_NAME"));
+        assertEquals(List.of("users", "users", "users"), tables);
     }
 }

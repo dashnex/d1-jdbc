@@ -28,6 +28,15 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
     static final String COLUMNS_SQL = "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk, (m.sql LIKE '%WITHOUT ROWID%') AS without_rowid "
             + "FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table','view') AND "
             + USER_TABLES + " ORDER BY m.name, p.cid";
+    /** Same projection as COLUMNS_SQL but restricted to one table, so a broken view elsewhere can't fail this query. */
+    static final String COLUMNS_FOR_TABLE_SQL = "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk, (m.sql LIKE '%WITHOUT ROWID%') AS without_rowid "
+            + "FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table','view') AND "
+            + USER_TABLES + " AND m.name = ? COLLATE NOCASE ORDER BY p.cid";
+    /** Per-table fallback used when COLUMNS_SQL itself fails (e.g. a broken view): queries pragma_table_info
+     * directly for one already-known-good table name, skipping the sqlite_master join entirely. */
+    static final String COLUMNS_ONE_TABLE_FALLBACK_SQL =
+            "SELECT ?, cid, name, type, \"notnull\", dflt_value, pk, "
+                    + "(SELECT sql LIKE '%WITHOUT ROWID%' FROM sqlite_master WHERE name = ?) FROM pragma_table_info(?)";
     static final String FOREIGN_KEYS_SQL = "SELECT m.name, f.id, f.seq, f.\"table\", f.\"from\", f.\"to\", f.on_update, f.on_delete "
             + "FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f WHERE m.type = 'table' AND "
             + USER_TABLES + " ORDER BY m.name, f.id, f.seq";
@@ -140,10 +149,83 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
         }
     }
 
+    /** All tables' columns. Falls back to one query per table (skipping any that fail, e.g. a view
+     * referencing a dropped table/column) if the joined all-tables query itself fails. */
     private List<ColumnRow> columnRows() throws SQLException {
+        try {
+            List<ColumnRow> out = new ArrayList<>();
+            for (Object[] r : query(COLUMNS_SQL)) out.add(new ColumnRow(r));
+            return out;
+        } catch (SQLException allTablesFailed) {
+            List<ColumnRow> out = new ArrayList<>();
+            for (Object[] t : query(TABLES_SQL)) {
+                String table = (String) t[0];
+                try {
+                    out.addAll(columnRowsForOneTable(table));
+                } catch (SQLException brokenTable) {
+                    // skip only this table; keep the rest of the schema browsable
+                }
+            }
+            return out;
+        }
+    }
+
+    /** One table's columns, filtered/matched against {@code tableNamePattern}. When the pattern carries no
+     * unescaped '%' it is tried first as an exact (COLLATE NOCASE) table name in a single request — the
+     * common case for IDEs, which pass literal names (occasionally with an unescaped '_') rather than LIKE
+     * patterns. Falls back to the all-tables scan (with its own per-table fallback) otherwise. */
+    private List<ColumnRow> columnRows(String tableNamePattern) throws SQLException {
+        if (tableNamePattern != null && !hasUnescapedPercent(tableNamePattern)) {
+            String exactName = unescapePattern(tableNamePattern);
+            List<ColumnRow> viaSingleTable;
+            try {
+                viaSingleTable = new ArrayList<>();
+                for (Object[] r : query(COLUMNS_FOR_TABLE_SQL, exactName)) viaSingleTable.add(new ColumnRow(r));
+            } catch (SQLException singleTableFailed) {
+                try {
+                    viaSingleTable = columnRowsForOneTable(exactName);
+                } catch (SQLException stillFailed) {
+                    viaSingleTable = List.of();
+                }
+            }
+            List<ColumnRow> filtered = new ArrayList<>();
+            for (ColumnRow c : viaSingleTable) {
+                if (SqlText.matchesPattern(tableNamePattern, c.table)) filtered.add(c);
+            }
+            if (!filtered.isEmpty()) return filtered;
+        }
+        return columnRows();
+    }
+
+    private List<ColumnRow> columnRowsForOneTable(String table) throws SQLException {
         List<ColumnRow> out = new ArrayList<>();
-        for (Object[] r : query(COLUMNS_SQL)) out.add(new ColumnRow(r));
+        for (Object[] r : query(COLUMNS_ONE_TABLE_FALLBACK_SQL, table, table, table)) out.add(new ColumnRow(r));
         return out;
+    }
+
+    private static boolean hasUnescapedPercent(String pattern) {
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '\\' && i + 1 < pattern.length()) {
+                i++;
+            } else if (c == '%') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String unescapePattern(String pattern) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '\\' && i + 1 < pattern.length()) {
+                sb.append(pattern.charAt(++i));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     private static Map<String, Integer> pkCounts(List<ColumnRow> rows) {
@@ -248,7 +330,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
     @Override
     public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern)
             throws SQLException {
-        List<ColumnRow> all = columnRows();
+        List<ColumnRow> all = columnRows(tableNamePattern);
         Map<String, Integer> pkCounts = pkCounts(all);
         List<Object[]> rows = new ArrayList<>();
         for (ColumnRow c : all) {
@@ -271,7 +353,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
     @Override
     public ResultSet getPrimaryKeys(String catalog, String schema, String table) throws SQLException {
         List<Object[]> rows = new ArrayList<>();
-        for (ColumnRow c : columnRows()) {
+        for (ColumnRow c : columnRows(table)) {
             if (c.pk > 0 && (table == null || sameName(c.table, table))) {
                 rows.add(new Object[]{null, null, c.table, c.name, c.pk, "pk_" + c.table});
             }
@@ -285,7 +367,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
     public ResultSet getBestRowIdentifier(String catalog, String schema, String table, int scope, boolean nullable)
             throws SQLException {
         List<Object[]> rows = new ArrayList<>();
-        for (ColumnRow c : columnRows()) {
+        for (ColumnRow c : columnRows(table)) {
             if (c.pk > 0 && sameName(c.table, table)) {
                 int jdbcType = D1Types.fromDeclared(c.type);
                 rows.add(new Object[]{bestRowSession, c.name, jdbcType, typeName(c, jdbcType), 0, null, null, bestRowNotPseudo});
