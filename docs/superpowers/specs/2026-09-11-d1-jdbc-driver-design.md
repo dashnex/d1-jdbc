@@ -86,7 +86,7 @@ The driver self-registers via `META-INF/services/java.sql.Driver`.
 |---|---|---|
 | `D1Driver` | URL/property parsing, `acceptsURL`, `getPropertyInfo`, creates connections | `D1Client`, `D1Connection` |
 | `D1ConnectionConfig` | Immutable parsed config (account, token, database ref, apiBase, timeout) | — |
-| `D1Client` | HTTP + JSON only: `query(sql, params) -> D1Result`, `batch(List<stmt>) -> List<D1Result>`, `resolveDatabaseId(name)`. Retries (up to 3 retries, backoff 200/800/1600 ms): HTTP 429 and connection-refused always; HTTP 5xx and other I/O errors only for read-only SQL (a single SELECT/EXPLAIN/VALUES/PRAGMA-without-`=`), so writes are never applied twice. Maps API errors to `SQLException`. | `java.net.http`, Jackson (shaded) |
+| `D1Client` | HTTP + JSON only: `query(sql, params) -> D1Result`, `batch(List<stmt>) -> List<D1Result>`, `resolveDatabaseId(name)`, `ping(timeoutSeconds)`. Retries (up to 3 retries, backoff 200/800/1600 ms): HTTP 429 always; a refused/dropped connection (`ConnectException`) always; HTTP 5xx and other I/O errors only for read-only SQL (a single SELECT/EXPLAIN/VALUES/PRAGMA-without-`=`), so writes are never applied twice. A request or connect **timeout** (`HttpTimeoutException`/`HttpConnectTimeoutException`) is never retried, read-only or not — the caller already waited the full configured timeout once. `ping(timeoutSeconds)` sends one request bounded by that timeout with no retry at all, used by `Connection.isValid`. The retry decision is `D1Client.shouldRetryIo(IOException, boolean readOnly)`. Maps API errors to `SQLException` (a SQL error, code 7500, is classified by message even if the HTTP status happens to be 401/403). | `java.net.http`, Jackson (shaded) |
 | `D1Result` | `columns`, `rows` (List of Object[]), `meta` (`changes`, `last_row_id`, `rows_read`, `rows_written`) | — |
 | `D1Connection` | Holds client + config; creates statements; autocommit semantics; `getMetaData` | `D1Client` |
 | `D1Statement` | `execute*`, `executeBatch` (one HTTP call, atomic in D1), update counts from `meta.changes`, generated keys from `meta.last_row_id` | `D1Connection` |
@@ -104,12 +104,32 @@ All-table queries use a single HTTP call by joining `sqlite_master` with the tab
 pragma functions (`pragma_table_info`, `pragma_foreign_key_list`, `pragma_index_list` +
 `pragma_index_xinfo`), always with the `sqlite\_%` / `\_cf\_%` filter.
 
+Column metadata for a **specific table** (`getColumns`/`getPrimaryKeys`/`getBestRowIdentifier` given a
+`tableNamePattern`/`table` with no unescaped `%`) is fetched with a single-table query
+(`COLUMNS_FOR_TABLE_SQL`, `m.name = ? COLLATE NOCASE`) instead of the all-tables join, so one broken view
+elsewhere can't affect it; results are still passed through `matchesPattern` (handling the common case of
+an unescaped `_` in a literal table name). If the **all-tables** column query itself fails — e.g. a view
+referencing a dropped table/column makes the join fail for every table — the driver falls back to
+`TABLES_SQL` plus one `pragma_table_info` query per table, skipping only the table(s) that fail, so the
+rest of the schema stays browsable.
+
 `ResultSetMetaData`: for a simple single-table `SELECT … FROM <table> [alias] [WHERE|GROUP|ORDER|LIMIT …]`
-(no `;`, `JOIN`, comma joins or set operations), columns whose names match a column of that table
-report `getTableName() = <table>` and the declared type from `pragma_table_info` (cached per
-connection, cleared after any statement containing CREATE/ALTER/DROP). Other columns report an
-empty table name and a type inferred from values. This lets the IDE grid identify the row's table
-for CRUD.
+— determined by scanning for the first `FROM` at parenthesis depth 0 outside quotes/comments, rejecting a
+subquery source (`FROM (…)`), and rejecting a comma or `JOIN` appearing at depth 0 before the first
+`WHERE`/`GROUP`/`ORDER`/`LIMIT` (or the statement's end) — columns whose names match a column of that
+table report `getTableName() = <table>` and the declared type from `pragma_table_info` (cached per
+connection, cleared after any statement containing CREATE/ALTER/DROP; a failed lookup is not cached, so a
+transient error is retried on the next call). `TYPE_NAME`/`getColumnTypeName` report the declared type
+**without** its parenthesised size (`VARCHAR(255)` → `VARCHAR`), matching sqlite-jdbc; `COLUMN_SIZE`/
+`DECIMAL_DIGITS` still carry the numbers. Other columns report an empty table name and a type inferred by
+scanning every row's value (not just the first non-null one): any `Double` → `DOUBLE` (D1 serialises a
+whole-number `REAL` as a JSON integer, so a column can mix `Long` and `Double` rows), else all-`Long` →
+`BIGINT`, all-blob → `BLOB`, all-boolean → `BOOLEAN`, anything mixed or text-only or all-null → `VARCHAR`.
+This lets the IDE grid identify the row's table for CRUD.
+
+`Statement.setMaxRows`: for a single read-only SELECT/VALUES, pushed down as
+`SELECT * FROM (<sql>) LIMIT <maxRows>` sent to D1, instead of only truncating after downloading the full
+result (which remains as a safety net). `lastSql`/`singleTable` still use the original, unwrapped SQL.
 
 | JDBC method | Source |
 |---|---|
@@ -136,10 +156,12 @@ Declared type → JDBC type by SQLite affinity:
 - `BOOLEAN`/`BOOL` → `BOOLEAN`; `DATE`/`DATETIME`/`TIMESTAMP` → `VARCHAR` (stored as text)
 - otherwise → `NUMERIC`
 
-Result-set columns (no declared type available from `/raw`) infer type from the first
-non-null value in the column: Long → `BIGINT`, Double → `DOUBLE`, String → `VARCHAR`,
-byte array → `BLOB`, all-null → `VARCHAR`. D1 returns blobs as JSON arrays of numbers; the
-client converts them to `byte[]`.
+Result-set columns (no declared type available from `/raw`) infer type by scanning **every** row's
+value, not just the first non-null one (D1 serialises a whole-number `REAL`, e.g. `10.0`, as a JSON
+integer, so a column can legitimately mix `Long` and `Double` rows): any `Double` → `DOUBLE`; else all
+non-null values `Long` → `BIGINT`; all-blob → `BLOB`; all-boolean → `BOOLEAN`; a mix of kinds, text-only,
+or all-null → `VARCHAR`. D1 returns blobs as JSON arrays of numbers; the client converts them to
+`byte[]`.
 
 Getters coerce like sqlite-jdbc (`getInt` on text parses, `getString` on number formats,
 `getBoolean` on 0/1, `getBytes` on text returns UTF-8).
@@ -154,11 +176,17 @@ Getters coerce like sqlite-jdbc (`getInt` on text parses, `getString` on number 
 
 ## Errors
 
-- HTTP 401/403 → `SQLException` "Cloudflare rejected the token (needs Account → D1 → Edit)", SQLState `28000`.
+- A SQL error (D1 error code `7500`) is classified by its message (see below) **before** the token check,
+  even if the HTTP status happens to be 401/403 — it is not a rejected token.
+- HTTP 401/403 (and no `7500` code) → `SQLException` "Cloudflare rejected the token (needs
+  Account → D1 → Edit)", SQLState `28000`.
 - HTTP 404 on database → "D1 database not found", SQLState `08001`.
 - API `success:false` with SQLite error text → `SQLException` carrying the message; SQLState
   `23000` for constraint violations, `42000` for syntax errors, otherwise `HY000`.
-- 429/5xx retried as above, then surfaced with the last error.
+- 429/5xx retried as above, then surfaced with the last error. A request or connect timeout is never
+  retried (see `D1Client` above); `Connection.isValid(timeout)` runs one `SELECT 1` via `D1Client.ping`,
+  bounded by the caller's timeout (or the connection's configured timeout when `timeout <= 0`), with no
+  retry, instead of delegating to the normal retrying `execute` path.
 - Network failures → `SQLException` SQLState `08006`.
 
 ## Testing
