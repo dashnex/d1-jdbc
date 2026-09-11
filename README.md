@@ -36,6 +36,10 @@ Optional properties: `apiBase` (default `https://api.cloudflare.com/client/v4`),
 4. **New Database Connection → Cloudflare D1**: Database = database name or UUID, Username = account ID,
    Password = API token. **Test Connection**.
 
+If the table editor doesn't offer SQLite-specific DDL, you can instead copy DBeaver's built-in SQLite
+driver (Driver Manager → SQLite → Copy), replace its library with the d1-jdbc jar and set the class name
+and URL template as above.
+
 ## DataGrip
 
 1. **Database Explorer → + → Driver**. Name `Cloudflare D1`.
@@ -43,6 +47,8 @@ Optional properties: `apiBase` (default `https://api.cloudflare.com/client/v4`),
 3. *URL templates*: add `default` = `jdbc:d1://{database}`. *Options → Dialect*: **SQLite**.
 4. **+ → Data Source → Cloudflare D1**: Authentication *User & Password*, User = account ID,
    Password = API token, Database = name or UUID. **Test Connection**.
+5. In the data source's **Options** tab, enable **Introspect using JDBC metadata** (DataGrip's native
+   SQLite introspector queries D1-internal tables that D1 rejects).
 
 ## Limitations
 
@@ -52,6 +58,12 @@ Optional properties: `apiBase` (default `https://api.cloudflare.com/client/v4`),
 - Dates are stored as text/integers exactly as SQLite does; no time-zone conversion.
 - `meta.changes` (update counts) for a DELETE that cascades via `ON DELETE CASCADE` include the cascaded rows (D1 behaviour).
 - D1 limits apply (e.g. 100 KB per SQL statement, 100 columns per table).
+- **Column type changes / table rebuilds are not atomic.** D1 always enforces foreign keys
+  (`PRAGMA foreign_keys=OFF` has no effect), so an IDE-generated table rebuild that drops and recreates a
+  parent table can fire `ON DELETE CASCADE` or fail midway. Prefer `ALTER TABLE … ADD/DROP/RENAME COLUMN`;
+  for rebuilds, run the script yourself as one statement batch beginning with `PRAGMA defer_foreign_keys = on`.
+- `Statement.setMaxRows` is pushed down as a `LIMIT` on the query sent to D1 (for a single SELECT/VALUES),
+  not just applied after downloading the full result.
 
 ## Development
 
