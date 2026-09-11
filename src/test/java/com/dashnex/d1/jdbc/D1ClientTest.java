@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 import static com.dashnex.d1.jdbc.StubD1Server.*;
@@ -197,6 +198,21 @@ class D1ClientTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    @Test
+    void declaredTypesFailureIsNotCachedSoATransientErrorCanRecover() throws SQLException {
+        // F6: a transient pragma_table_info failure must not be cached as "this table has no columns"
+        // forever; only a successful lookup (or a schema-changing DDL) should populate the cache.
+        D1Connection connection = new D1Connection(stub.config(), client);
+        stub.enqueue(error(500, 0, "boom"));
+        stub.enqueue(error(500, 0, "boom"));
+        stub.enqueue(error(500, 0, "boom"));
+        stub.enqueue(error(500, 0, "boom"));
+        assertEquals(Map.of(), connection.declaredTypes("t"));
+
+        stub.enqueue(ok(result(new String[]{"name", "type"}, new Object[][]{{"id", "INTEGER"}})));
+        assertEquals("INTEGER", connection.declaredTypes("t").get("id"));
     }
 
     @Test
