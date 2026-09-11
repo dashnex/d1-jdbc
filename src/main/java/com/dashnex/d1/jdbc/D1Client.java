@@ -15,6 +15,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -79,6 +80,16 @@ public class D1Client {
         return parseResults(send(rawRequest(body), SqlText.isReadOnly(sql)));
     }
 
+    /** Sends one SELECT 1 bounded by {@code timeoutSeconds}, with no retry regardless of the failure kind;
+     * used by {@link D1Connection#isValid(int)} so a slow/hung connection is reported within the caller's
+     * own timeout instead of after up to three retries of the (much larger) configured request timeout. */
+    void ping(int timeoutSeconds) throws SQLException {
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("sql", "SELECT 1");
+        body.set("params", encodeParams(List.of()));
+        send(rawRequest(body, timeoutSeconds), true, false);
+    }
+
     /** Runs statements in one request; D1 applies a batch atomically. */
     public List<D1Result> batch(List<Stmt> statements) throws SQLException {
         ObjectNode body = MAPPER.createObjectNode();
@@ -111,6 +122,10 @@ public class D1Client {
     }
 
     private HttpRequest rawRequest(ObjectNode body) throws SQLException {
+        return rawRequest(body, config.getTimeoutSeconds());
+    }
+
+    private HttpRequest rawRequest(ObjectNode body, int timeoutSeconds) throws SQLException {
         byte[] payload;
         try {
             payload = MAPPER.writeValueAsBytes(body);
@@ -118,15 +133,19 @@ public class D1Client {
             throw new SQLException("Cannot encode D1 request: " + e.getMessage(), "HY000", e);
         }
         URI uri = URI.create(accountUrl() + "/d1/database/" + encode(databaseId()) + "/raw");
-        return baseRequest(uri)
+        return baseRequest(uri, timeoutSeconds)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
                 .build();
     }
 
     private HttpRequest.Builder baseRequest(URI uri) {
+        return baseRequest(uri, config.getTimeoutSeconds());
+    }
+
+    private HttpRequest.Builder baseRequest(URI uri, int timeoutSeconds) {
         return HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofSeconds(config.getTimeoutSeconds()))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .header("Authorization", "Bearer " + config.getToken())
                 .header("Accept", "application/json");
     }
@@ -136,13 +155,17 @@ public class D1Client {
     }
 
     private JsonNode send(HttpRequest request, boolean retryable) throws SQLException {
+        return send(request, retryable, true);
+    }
+
+    private JsonNode send(HttpRequest request, boolean retryable, boolean allowRetry) throws SQLException {
         for (int attempt = 0; ; attempt++) {
-            boolean canRetry = attempt < backoffMillis.length;
+            boolean canRetry = allowRetry && attempt < backoffMillis.length;
             HttpResponse<byte[]> response;
             try {
                 response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
             } catch (IOException e) {
-                if (canRetry && (retryable || e instanceof ConnectException)) {
+                if (canRetry && shouldRetryIo(e, retryable)) {
                     sleep(backoffMillis[attempt]);
                     continue;
                 }
@@ -162,6 +185,17 @@ public class D1Client {
             }
             throw D1Errors.toSqlException(status, json);
         }
+    }
+
+    /** Whether an I/O failure should be retried. A timeout (request or connect) is never retried — the
+     * caller already waited the full configured timeout once, so retrying would multiply that wait for a
+     * possibly-just-slow server. A refused/dropped connection is retried unconditionally, since a write that
+     * never reached the server is safe to resend. Any other I/O error is retried only for read-only SQL, so
+     * a write is never silently applied twice. */
+    static boolean shouldRetryIo(IOException e, boolean readOnly) {
+        if (e instanceof HttpTimeoutException) return false;
+        if (e instanceof ConnectException) return true;
+        return readOnly;
     }
 
     private static void sleep(long millis) throws SQLException {

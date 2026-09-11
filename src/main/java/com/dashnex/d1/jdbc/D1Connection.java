@@ -135,7 +135,7 @@ public class D1Connection implements Connection {
     public boolean isValid(int timeout) {
         if (closed) return false;
         try {
-            client.execute("SELECT 1", List.of());
+            client.ping(timeout > 0 ? timeout : config.getTimeoutSeconds());
             return true;
         } catch (SQLException e) {
             return false;
