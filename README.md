@@ -21,11 +21,17 @@ Or build it yourself:
 
 1. **The driver jar** — download [d1-jdbc.jar](https://github.com/dashnex/d1-jdbc/releases/latest/download/d1-jdbc.jar)
    and keep it somewhere permanent (e.g. `~/jdbc-drivers/d1-jdbc.jar`); the IDE loads it from that path.
-2. **Your Cloudflare account ID** — Cloudflare dashboard → **Workers & Pages** → *Account details* in the
-   right sidebar (a 32-character hex string).
-3. **A Cloudflare API token** — **My Profile → API Tokens → Create Token → Create Custom Token**,
-   permission **Account → D1 → Edit**, account resource = your account. Copy the token once shown.
-4. **The database name or UUID** — **Workers & Pages → D1 SQL Database**, or `npx wrangler d1 list`.
+2. **Your Cloudflare account ID** — open [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)
+   and click the copy button next to **Account ID** in the *Account Details* section (a 32-character hex string).
+   Alternatively, on [Account home](https://dash.cloudflare.com/?to=/:account/home) press `Cmd/Ctrl + K` and run
+   *Copy account ID*. ([Cloudflare docs](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/))
+3. **A Cloudflare API token** — open the
+   [pre-filled token form](https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%5D&name=D1%20JDBC%20Driver)
+   (an account-owned token named *D1 JDBC Driver* with **D1 → Edit** already selected), pick your account if
+   asked, click **Continue to summary → Create Token**, and copy the token — it is shown only once.
+   ([Cloudflare docs](https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/))
+4. **The database name or UUID** — open [D1 SQL database](https://dash.cloudflare.com/?to=/:account/workers/d1)
+   and copy the database's name, or open it and copy its **Database ID**. From a terminal: `npx wrangler d1 list`.
 
 ## Connection settings (reference)
 
