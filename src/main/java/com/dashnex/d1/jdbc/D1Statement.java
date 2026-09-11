@@ -62,7 +62,11 @@ public class D1Statement implements Statement {
             updateCount = 0;
             return false;
         }
-        List<D1Result> results = connection.client().execute(SqlText.rewrite(sql), params);
+        String rewritten = SqlText.rewrite(sql);
+        String sent = maxRows > 0 && SqlText.isSelect(sql)
+                ? "SELECT * FROM (" + SqlText.stripTrailingSemicolons(rewritten) + ") LIMIT " + maxRows
+                : rewritten;
+        List<D1Result> results = connection.client().execute(sent, params);
         if (SqlText.isDdl(sql)) {
             connection.schemaChanged();
         }

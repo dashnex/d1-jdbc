@@ -42,6 +42,13 @@ final class SqlText {
                 || (kw.equals("PRAGMA") && sql.indexOf('=') < 0);
     }
 
+    /** True only for a single SELECT or VALUES statement (candidate for maxRows push-down as a LIMIT). */
+    static boolean isSelect(String sql) {
+        if (sql == null || stripTrailingSemicolons(sql).indexOf(';') >= 0) return false;
+        String kw = firstKeyword(sql);
+        return kw.equals("SELECT") || kw.equals("VALUES");
+    }
+
     static boolean isInsert(String sql) {
         String kw = firstKeyword(sql);
         return kw.equals("INSERT") || kw.equals("REPLACE");
@@ -236,7 +243,7 @@ final class SqlText {
         return sql.substring(start, i).toUpperCase(Locale.ROOT);
     }
 
-    private static String stripTrailingSemicolons(String sql) {
+    static String stripTrailingSemicolons(String sql) {
         String s = sql.trim();
         while (s.endsWith(";")) s = s.substring(0, s.length() - 1).trim();
         return s;
