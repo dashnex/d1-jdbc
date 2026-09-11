@@ -121,7 +121,38 @@ class D1StatementTest {
             st.setMaxRows(200);
             st.executeQuery("SELECT * FROM users");
         }
-        assertEquals("SELECT * FROM (SELECT * FROM users) LIMIT 200", stub.requests().get(1).sql());
+        assertEquals("SELECT * FROM (SELECT * FROM users\n) LIMIT 200", stub.requests().get(1).sql());
+    }
+
+    @Test
+    void maxRowsPushDownSurvivesTrailingLineComment() throws SQLException {
+        // Regression: a bare ") LIMIT n" appended right after "-- todo" (no trailing newline) would
+        // land inside the line comment and produce invalid SQL. A newline before the closing paren
+        // fixes that.
+        stub.handler(r -> r.sql().contains("pragma_table_info")
+                ? ok(result(new String[]{"name", "type"}, new Object[][]{{"id", "INTEGER"}}))
+                : ok(result(new String[]{"id"}, new Object[][]{{1}})));
+        try (Statement st = conn.createStatement()) {
+            st.setMaxRows(5);
+            st.executeQuery("SELECT * FROM t -- todo");
+        }
+        String sent = stub.requests().get(1).sql();
+        assertTrue(sent.endsWith("\n) LIMIT 5"), sent);
+        assertEquals("SELECT * FROM (SELECT * FROM t -- todo\n) LIMIT 5", sent);
+    }
+
+    @Test
+    void maxRowsPushDownSkippedWhenSemicolonPrecedesTrailingComment() throws SQLException {
+        // "SELECT 1; -- x" is a single statement with an explicit terminator followed by a comment.
+        // stripTrailingSemicolons only strips a bare trailing ';', so isSelect conservatively treats
+        // this as "not a single statement" and skips the LIMIT wrapping entirely — sending it
+        // unwrapped is correct SQL, whereas wrapping it (without stripping the ';') would not be.
+        stub.enqueue(ok(result(new String[]{"1"}, new Object[][]{{1}})));
+        try (Statement st = conn.createStatement()) {
+            st.setMaxRows(5);
+            st.executeQuery("SELECT 1; -- x");
+        }
+        assertEquals("SELECT 1; -- x", stub.lastRequest().sql());
     }
 
     @Test
