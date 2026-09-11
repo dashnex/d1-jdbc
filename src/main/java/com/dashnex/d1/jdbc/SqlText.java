@@ -16,11 +16,12 @@ final class SqlText {
     private static final Pattern SQLITE_VERSION_CALL = Pattern.compile("(?i)\\bsqlite_version\\s*\\(\\s*\\)");
     private static final Pattern DDL = Pattern.compile("(?i)\\b(?:CREATE|ALTER|DROP)\\b");
     private static final Pattern SET_OPERATION = Pattern.compile("(?i)\\b(?:UNION|INTERSECT|EXCEPT)\\b");
-    private static final Pattern SINGLE_TABLE_SELECT = Pattern.compile(
-            "(?is)^\\s*SELECT\\s+.+?\\s+FROM\\s+(?:main\\.)?"
+    private static final Pattern SELECT_PREFIX = Pattern.compile("(?is)^\\s*SELECT\\b");
+    /** Matches the remainder of a FROM clause once boundaries (subquery/comma/JOIN/WHERE...) have already been excluded. */
+    private static final Pattern TABLE_TAIL = Pattern.compile(
+            "(?is)^(?:main\\.)?"
                     + "(\"(?:[^\"]|\"\")+\"|`[^`]+`|\\[[^\\]]+\\]|[A-Za-z_][A-Za-z0-9_$]*)"
-                    + "(?:\\s+(?:AS\\s+)?[A-Za-z_][A-Za-z0-9_]*)?"
-                    + "(?:\\s+(?:WHERE|GROUP|ORDER|LIMIT)\\b.*)?\\s*$");
+                    + "(?:\\s+(?:AS\\s+)?[A-Za-z_][A-Za-z0-9_]*)?\\s*$");
 
     private SqlText() {
     }
@@ -54,9 +55,108 @@ final class SqlText {
     static String singleTable(String sql) {
         if (sql == null) return null;
         String s = stripTrailingSemicolons(sql);
-        if (s.indexOf(';') >= 0 || SET_OPERATION.matcher(s).find()) return null;
-        Matcher m = SINGLE_TABLE_SELECT.matcher(s);
+        if (s.indexOf(';') >= 0 || SET_OPERATION.matcher(s).find() || !SELECT_PREFIX.matcher(s).find()) {
+            return null;
+        }
+        int n = s.length();
+        int fromPos = findTopLevelFrom(s);
+        if (fromPos < 0) return null;
+
+        int i = fromPos + 4;
+        while (i < n && Character.isWhitespace(s.charAt(i))) i++;
+        if (i < n && s.charAt(i) == '(') return null; // FROM (subquery) — no real table
+
+        int depth = 0;
+        int boundaryEnd = n;
+        int p = i;
+        while (p < n) {
+            int skip = skipNonCode(s, p);
+            if (skip >= 0) {
+                p = skip;
+                continue;
+            }
+            char c = s.charAt(p);
+            if (c == '(') {
+                depth++;
+                p++;
+            } else if (c == ')') {
+                depth--;
+                p++;
+            } else if (depth == 0 && c == ',') {
+                return null; // comma-joined tables
+            } else if (depth == 0 && Character.isLetter(c)) {
+                int end = wordEnd(s, p);
+                String word = s.substring(p, end).toUpperCase(Locale.ROOT);
+                if (word.equals("JOIN")) return null;
+                if (word.equals("WHERE") || word.equals("GROUP") || word.equals("ORDER") || word.equals("LIMIT")) {
+                    boundaryEnd = p;
+                    break;
+                }
+                p = end;
+            } else {
+                p++;
+            }
+        }
+        String tableClause = s.substring(i, boundaryEnd).trim();
+        Matcher m = TABLE_TAIL.matcher(tableClause);
         return m.matches() ? unquoteIdentifier(m.group(1)) : null;
+    }
+
+    /** Index of the first "FROM" keyword at parenthesis depth 0, outside quotes/comments; -1 if none. */
+    private static int findTopLevelFrom(String s) {
+        int n = s.length();
+        int depth = 0;
+        int p = 0;
+        while (p < n) {
+            int skip = skipNonCode(s, p);
+            if (skip >= 0) {
+                p = skip;
+                continue;
+            }
+            char c = s.charAt(p);
+            if (c == '(') {
+                depth++;
+                p++;
+            } else if (c == ')') {
+                depth--;
+                p++;
+            } else if (depth == 0 && Character.isLetter(c)) {
+                int end = wordEnd(s, p);
+                if (end - p == 4 && s.regionMatches(true, p, "FROM", 0, 4)) return p;
+                p = end;
+            } else {
+                p++;
+            }
+        }
+        return -1;
+    }
+
+    /** If position {@code p} starts a quoted string, bracketed identifier, or comment, returns the index just past
+     * it; otherwise -1 (nothing to skip). */
+    private static int skipNonCode(String s, int p) {
+        int n = s.length();
+        char c = s.charAt(p);
+        if (c == '\'' || c == '"' || c == '`') return skipQuoted(s, p, c) + 1;
+        if (c == '[') {
+            int end = s.indexOf(']', p + 1);
+            return end < 0 ? n : end + 1;
+        }
+        if (c == '-' && p + 1 < n && s.charAt(p + 1) == '-') {
+            int end = s.indexOf('\n', p);
+            return end < 0 ? n : end + 1;
+        }
+        if (c == '/' && p + 1 < n && s.charAt(p + 1) == '*') {
+            int end = s.indexOf("*/", p + 2);
+            return end < 0 ? n : end + 2;
+        }
+        return -1;
+    }
+
+    private static int wordEnd(String s, int p) {
+        int n = s.length();
+        int e = p;
+        while (e < n && (Character.isLetterOrDigit(s.charAt(e)) || s.charAt(e) == '_' || s.charAt(e) == '$')) e++;
+        return e;
     }
 
     static int countParameters(String sql) {
