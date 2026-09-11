@@ -30,8 +30,10 @@ Or build it yourself:
    (an account-owned token named *D1 JDBC Driver* with **D1 → Edit** already selected), pick your account if
    asked, click **Continue to summary → Create Token**, and copy the token — it is shown only once.
    ([Cloudflare docs](https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/))
-4. **The database name or UUID** — open [D1 SQL database](https://dash.cloudflare.com/?to=/:account/workers/d1)
-   and copy the database's name, or open it and copy its **Database ID**. From a terminal: `npx wrangler d1 list`.
+4. **The Database ID** — open [D1 SQL database](https://dash.cloudflare.com/?to=/:account/workers/d1), select your
+   database and copy its **Database ID** (a UUID). From a terminal: `npx wrangler d1 list`.
+   The database *name* also works; the driver then looks up its ID once per connection. The ID is recommended:
+   it skips that lookup and always points at exactly one database.
 
 ## Connection settings (reference)
 
