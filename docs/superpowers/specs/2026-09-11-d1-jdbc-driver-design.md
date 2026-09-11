@@ -36,6 +36,29 @@ The driver reports `getDatabaseProductName() == "SQLite"` so both IDEs pick thei
 dialect for SQL generation, data-editor behaviour (rowid fallback) and DDL (ALTER TABLE
 ADD/DROP/RENAME COLUMN, table rebuild for type changes).
 
+## Verified D1 behaviour (live probe, 2026-09-11)
+
+- Multi-statement `sql` returns one `result[]` entry per statement; `{"batch":[...]}` works on `/raw`.
+- Values: integers/reals as JSON numbers (integers beyond 2^53 lose precision), text as strings,
+  blobs as JSON arrays of byte values (0–255). JSON `true` params are stored as TEXT `"true"`,
+  so booleans must be sent as `1`/`0`. Byte-array params sent as JSON number arrays bind as BLOB.
+- Zero-row SELECTs still return `columns`; DDL/DML return `columns: []`.
+- `meta.last_row_id` is sticky across statements; only trust it after an INSERT with `changes > 0`.
+- `sqlite_version()` → error "not authorized to use function". The driver rewrites
+  `sqlite_version()` to the literal `'3.45.0'` and reports product version `3.45.0`.
+- `BEGIN`/`COMMIT`/`SAVEPOINT` → error. The driver turns standalone transaction-control
+  statements (`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT x`, `RELEASE x`) into no-ops with a
+  `SQLWarning`.
+- `PRAGMA table_info/foreign_key_list/index_list/index_xinfo` work as statements and as
+  table-valued functions, **but** any query touching D1's internal `_cf_KV` table fails with
+  `SQLITE_AUTH`. All metadata queries must filter `sqlite\_%` and `\_cf\_%` names.
+- `PRAGMA foreign_key_list` returns `to = null` when the FK references the parent's implicit PK;
+  the driver resolves it to the parent's PK column at the same `seq`.
+- Errors: HTTP 401 for bad token; HTTP 404 + code 7404 for unknown database; SQL errors are
+  HTTP 4xx/200 with `success:false`, code 7500 and messages like
+  `UNIQUE constraint failed: t.e: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)`.
+- `GET /accounts/{id}/d1/database` lists databases with `name` and `uuid` (paginated).
+
 ## Connection configuration
 
 | Item | Value |
@@ -58,7 +81,7 @@ The driver self-registers via `META-INF/services/java.sql.Driver`.
 |---|---|---|
 | `D1Driver` | URL/property parsing, `acceptsURL`, `getPropertyInfo`, creates connections | `D1Client`, `D1Connection` |
 | `D1ConnectionConfig` | Immutable parsed config (account, token, database ref, apiBase, timeout) | — |
-| `D1Client` | HTTP + JSON only: `query(sql, params) -> D1Result`, `batch(List<stmt>) -> List<D1Result>`, `resolveDatabaseId(name)`. Retries 429/5xx (3 attempts, exponential backoff 200ms→1.6s). Maps API errors to `SQLException`. | `java.net.http`, Jackson (shaded) |
+| `D1Client` | HTTP + JSON only: `query(sql, params) -> D1Result`, `batch(List<stmt>) -> List<D1Result>`, `resolveDatabaseId(name)`. Retries (up to 3 retries, backoff 200/800/1600 ms): HTTP 429 and connection-refused always; HTTP 5xx and other I/O errors only for read-only SQL (a single SELECT/EXPLAIN/VALUES/PRAGMA-without-`=`), so writes are never applied twice. Maps API errors to `SQLException`. | `java.net.http`, Jackson (shaded) |
 | `D1Result` | `columns`, `rows` (List of Object[]), `meta` (`changes`, `last_row_id`, `rows_read`, `rows_written`) | — |
 | `D1Connection` | Holds client + config; creates statements; autocommit semantics; `getMetaData` | `D1Client` |
 | `D1Statement` | `execute*`, `executeBatch` (one HTTP call, atomic in D1), update counts from `meta.changes`, generated keys from `meta.last_row_id` | `D1Connection` |
@@ -69,7 +92,19 @@ The driver self-registers via `META-INF/services/java.sql.Driver`.
 
 ## Metadata mapping
 
-Catalogs: none (`getCatalogs` empty). Schemas: single schema `main`.
+Catalogs and schemas: none (`getCatalogs`/`getSchemas` empty, `TABLE_CAT`/`TABLE_SCHEM` null),
+matching sqlite-jdbc so IDEs list tables directly under the connection.
+
+All-table queries use a single HTTP call by joining `sqlite_master` with the table-valued
+pragma functions (`pragma_table_info`, `pragma_foreign_key_list`, `pragma_index_list` +
+`pragma_index_xinfo`), always with the `sqlite\_%` / `\_cf\_%` filter.
+
+`ResultSetMetaData`: for a simple single-table `SELECT … FROM <table> [alias] [WHERE|GROUP|ORDER|LIMIT …]`
+(no `;`, `JOIN`, comma joins or set operations), columns whose names match a column of that table
+report `getTableName() = <table>` and the declared type from `pragma_table_info` (cached per
+connection, cleared after any statement containing CREATE/ALTER/DROP). Other columns report an
+empty table name and a type inferred from values. This lets the IDE grid identify the row's table
+for CRUD.
 
 | JDBC method | Source |
 |---|---|
@@ -80,7 +115,8 @@ Catalogs: none (`getCatalogs` empty). Schemas: single schema `main`.
 | `getExportedKeys` / `getCrossReference` | `foreign_key_list` across all tables, filtered by referenced table |
 | `getIndexInfo` | `PRAGMA index_list` + `PRAGMA index_info` |
 | `getTypeInfo` | Static list: INTEGER, REAL, TEXT, BLOB, NUMERIC |
-| Product info | name `SQLite`, version from `SELECT sqlite_version()`; driver name `Cloudflare D1 JDBC` |
+| Product info | name `SQLite`, version constant `3.45.0` (D1 blocks `sqlite_version()`); driver name `Cloudflare D1 JDBC` |
+| Transactions | `supportsTransactions() = false`, default isolation `TRANSACTION_NONE` (IDEs then stay in auto-commit) |
 
 Identifiers are quoted with `"` and embedded quotes doubled.
 
@@ -88,9 +124,9 @@ Identifiers are quoted with `"` and embedded quotes doubled.
 
 Declared type → JDBC type by SQLite affinity:
 
-- contains `INT` → `BIGINT` (`INTEGER` exactly → `INTEGER`)
+- contains `INT` → `BIGINT` (always 64-bit, so IDEs never read with `getInt` and overflow)
 - contains `CHAR`, `CLOB`, `TEXT` → `VARCHAR`
-- contains `BLOB` or empty → `BLOB`
+- contains `BLOB` → `BLOB`; empty/missing declared type → `VARCHAR` (display-friendly; SQLite affinity would be BLOB)
 - contains `REAL`, `FLOA`, `DOUB` → `DOUBLE`
 - `BOOLEAN`/`BOOL` → `BOOLEAN`; `DATE`/`DATETIME`/`TIMESTAMP` → `VARCHAR` (stored as text)
 - otherwise → `NUMERIC`
