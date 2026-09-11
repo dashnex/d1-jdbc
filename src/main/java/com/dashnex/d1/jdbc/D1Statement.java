@@ -63,8 +63,11 @@ public class D1Statement implements Statement {
             return false;
         }
         String rewritten = SqlText.rewrite(sql);
+        // The newline before ')' matters: if the wrapped SQL ends in a "--" line comment (e.g.
+        // "SELECT * FROM t -- todo"), appending ") LIMIT n" right after it would land inside the
+        // comment and produce invalid SQL.
         String sent = maxRows > 0 && SqlText.isSelect(sql)
-                ? "SELECT * FROM (" + SqlText.stripTrailingSemicolons(rewritten) + ") LIMIT " + maxRows
+                ? "SELECT * FROM (" + SqlText.stripTrailingSemicolons(rewritten) + "\n) LIMIT " + maxRows
                 : rewritten;
         List<D1Result> results = connection.client().execute(sent, params);
         if (SqlText.isDdl(sql)) {
