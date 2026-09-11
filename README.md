@@ -3,13 +3,19 @@
 JDBC driver for [Cloudflare D1](https://developers.cloudflare.com/d1/) over the D1 REST API. Browse tables,
 views, columns, primary/foreign keys and indexes, edit rows and alter tables from DBeaver or DataGrip.
 
-## Build
+## Download
+
+Grab the driver jar (single file, dependencies shaded, Java 11+):
+
+- **Latest:** [d1-jdbc.jar](https://github.com/dashnex/d1-jdbc/releases/latest/download/d1-jdbc.jar)
+- **All versions:** [Releases](https://github.com/dashnex/d1-jdbc/releases) — each release has
+  `d1-jdbc-<version>.jar`, `d1-jdbc.jar` and `SHA256SUMS`.
+
+Or build it yourself:
 
 ```bash
-./gradlew build
+./gradlew build    # → build/libs/d1-jdbc-<version>-all.jar
 ```
-
-The driver jar is `build/libs/d1-jdbc-0.1.0-all.jar` (dependencies shaded; no other files needed).
 
 ## Cloudflare API token
 
@@ -32,7 +38,7 @@ Optional properties: `apiBase` (default `https://api.cloudflare.com/client/v4`),
 1. **Database → Driver Manager → New**.
 2. *Settings*: Driver Name `Cloudflare D1`, Driver Type `Generic`, Class Name `com.dashnex.d1.jdbc.D1Driver`,
    URL Template `jdbc:d1://{database}`, leave Default Port empty, tick *No authentication* **off**.
-3. *Libraries*: **Add File** → `d1-jdbc-0.1.0-all.jar`. Click **OK**.
+3. *Libraries*: **Add File** → the downloaded `d1-jdbc.jar`. Click **OK**.
 4. **New Database Connection → Cloudflare D1**: Database = database name or UUID, Username = account ID,
    Password = API token. **Test Connection**.
 
@@ -43,7 +49,7 @@ and URL template as above.
 ## DataGrip
 
 1. **Database Explorer → + → Driver**. Name `Cloudflare D1`.
-2. *Driver Files*: **+ → Custom JARs…** → `d1-jdbc-0.1.0-all.jar`. Class `com.dashnex.d1.jdbc.D1Driver`.
+2. *Driver Files*: **+ → Custom JARs…** → the downloaded `d1-jdbc.jar`. Class `com.dashnex.d1.jdbc.D1Driver`.
 3. *URL templates*: add `default` = `jdbc:d1://{database}`. *Options → Dialect*: **SQLite**.
 4. **+ → Data Source → Cloudflare D1**: Authentication *User & Password*, User = account ID,
    Password = API token, Database = name or UUID. **Test Connection**.
@@ -70,4 +76,14 @@ and URL template as above.
 ```bash
 ./gradlew test                 # unit tests (no network)
 ./gradlew integrationTest      # real D1; needs D1_ACCOUNT_ID, D1_TOKEN, D1_DATABASE (env or .env)
+```
+
+## Releasing
+
+Push a version tag; the [Release workflow](.github/workflows/release.yml) builds and tests the jar and
+publishes a GitHub Release with the jar attached:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```

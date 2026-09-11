@@ -4,7 +4,8 @@ plugins {
 }
 
 group = "com.dashnex"
-version = "0.1.0"
+// Release builds pass -PreleaseVersion=<tag without the leading "v">.
+version = (findProperty("releaseVersion") as String?) ?: "0.1.0"
 
 repositories { mavenCentral() }
 
