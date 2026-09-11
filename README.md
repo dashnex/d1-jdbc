@@ -17,12 +17,17 @@ Or build it yourself:
 ./gradlew build    # → build/libs/d1-jdbc-<version>-all.jar
 ```
 
-## Cloudflare API token
+## What you need
 
-Create a token at **My Profile → API Tokens → Create Token → Custom token** with
-**Account → D1 → Edit** for your account. You also need your **account ID** (Workers & Pages overview, right sidebar).
+1. **The driver jar** — download [d1-jdbc.jar](https://github.com/dashnex/d1-jdbc/releases/latest/download/d1-jdbc.jar)
+   and keep it somewhere permanent (e.g. `~/jdbc-drivers/d1-jdbc.jar`); the IDE loads it from that path.
+2. **Your Cloudflare account ID** — Cloudflare dashboard → **Workers & Pages** → *Account details* in the
+   right sidebar (a 32-character hex string).
+3. **A Cloudflare API token** — **My Profile → API Tokens → Create Token → Create Custom Token**,
+   permission **Account → D1 → Edit**, account resource = your account. Copy the token once shown.
+4. **The database name or UUID** — **Workers & Pages → D1 SQL Database**, or `npx wrangler d1 list`.
 
-## Connection settings
+## Connection settings (reference)
 
 | Field | Value |
 |---|---|
@@ -31,30 +36,89 @@ Create a token at **My Profile → API Tokens → Create Token → Custom token*
 | User | Cloudflare account ID |
 | Password | Cloudflare API token |
 
-Optional properties: `apiBase` (default `https://api.cloudflare.com/client/v4`), `timeoutSeconds` (default `30`).
+Optional driver properties: `apiBase` (default `https://api.cloudflare.com/client/v4`),
+`timeoutSeconds` (default `30`). They can also be appended to the URL: `jdbc:d1://my-db?timeoutSeconds=60`.
 
-## DBeaver
+## Add the driver to DBeaver
 
-1. **Database → Driver Manager → New**.
-2. *Settings*: Driver Name `Cloudflare D1`, Driver Type `Generic`, Class Name `com.dashnex.d1.jdbc.D1Driver`,
-   URL Template `jdbc:d1://{database}`, leave Default Port empty, tick *No authentication* **off**.
-3. *Libraries*: **Add File** → the downloaded `d1-jdbc.jar`. Click **OK**.
-4. **New Database Connection → Cloudflare D1**: Database = database name or UUID, Username = account ID,
-   Password = API token. **Test Connection**.
+Tested with DBeaver 24+ (Community or PRO).
 
-If the table editor doesn't offer SQLite-specific DDL, you can instead copy DBeaver's built-in SQLite
-driver (Driver Manager → SQLite → Copy), replace its library with the d1-jdbc jar and set the class name
-and URL template as above.
+**1. Register the driver (once)**
 
-## DataGrip
+1. Open **Database → Driver Manager** and click **New**.
+2. On the **Settings** tab fill in:
 
-1. **Database Explorer → + → Driver**. Name `Cloudflare D1`.
-2. *Driver Files*: **+ → Custom JARs…** → the downloaded `d1-jdbc.jar`. Class `com.dashnex.d1.jdbc.D1Driver`.
-3. *URL templates*: add `default` = `jdbc:d1://{database}`. *Options → Dialect*: **SQLite**.
-4. **+ → Data Source → Cloudflare D1**: Authentication *User & Password*, User = account ID,
-   Password = API token, Database = name or UUID. **Test Connection**.
-5. In the data source's **Options** tab, enable **Introspect using JDBC metadata** (DataGrip's native
-   SQLite introspector queries D1-internal tables that D1 rejects).
+   | Field | Value |
+   |---|---|
+   | Driver Name | `Cloudflare D1` |
+   | Driver Type | `Generic` |
+   | Class Name | `com.dashnex.d1.jdbc.D1Driver` |
+   | URL Template | `jdbc:d1://{database}` |
+   | Default Port | *(leave empty)* |
+   | No authentication | *(unchecked)* |
+
+3. On the **Libraries** tab click **Add File**, pick `d1-jdbc.jar`, then click **Find Class** and confirm
+   `com.dashnex.d1.jdbc.D1Driver` is selected.
+4. Click **OK** to save the driver.
+
+**2. Create a connection**
+
+1. **Database → New Database Connection**, type `Cloudflare D1` in the search box, select it, **Next**.
+2. On the **Main** tab:
+   - **Database**: your D1 database name (e.g. `my-db`) or its UUID
+   - **Username**: your Cloudflare account ID
+   - **Password**: your API token (tick *Save password* to store it in DBeaver's secure storage)
+3. Click **Test Connection** — you should see *Connected*. Then **Finish**.
+4. Expand the connection: tables and views appear directly under it. Open a table to see
+   **Columns**, **Foreign Keys** and **Indexes**, or switch to the **ER Diagram** tab.
+
+**3. Recommended settings**
+
+- Keep **auto-commit** on (the default). D1 has no transactions; every change is saved immediately.
+- To edit data: open a table's **Data** tab, edit cells or add/delete rows, then **Save** (or `Ctrl/Cmd+S`).
+- Tip: if you prefer DBeaver's SQLite-specific editors, copy the built-in driver instead of step 1
+  (**Driver Manager → SQLite → Copy**), replace its library with `d1-jdbc.jar`, and set the class name and
+  URL template as above.
+
+## Add the driver to DataGrip
+
+Tested with DataGrip 2024.x+ (also works in IntelliJ IDEA Ultimate's Database tool window).
+
+**1. Register the driver (once)**
+
+1. Open the **Database** tool window, click **+ → Driver** (or **+ → Data Source → Driver** in older versions).
+2. **Name**: `Cloudflare D1`.
+3. **Driver Files**: click **+ → Custom JARs…** and select `d1-jdbc.jar`.
+4. **Class**: choose `com.dashnex.d1.jdbc.D1Driver` from the dropdown.
+5. **URL templates**: click **+**, name `default`, template `jdbc:d1://{database}`.
+6. **Options** tab → **Dialect**: `SQLite`. Click **OK** / **Apply**.
+
+**2. Create a data source**
+
+1. **+ → Data Source → Cloudflare D1**.
+2. **Authentication**: `User & Password`.
+   - **User**: your Cloudflare account ID
+   - **Password**: your API token
+   - **Database**: your D1 database name or UUID (the URL preview should read `jdbc:d1://<database>`)
+3. Open the data source's **Options** tab and enable **Introspect using JDBC metadata**. This is required:
+   DataGrip's built-in SQLite introspector queries D1-internal tables that D1 refuses.
+4. Click **Test Connection**, then **OK**. The schema tree shows tables, columns, keys and indexes;
+   right-click a table → **Diagrams → Show Diagram** for the ER view.
+
+**3. Recommended settings**
+
+- Leave the transaction mode on **Auto** commit (toolbar *Tx* dropdown). Changes are saved immediately.
+- Edit data by opening a table (double-click), changing cells, then **Submit** (`Ctrl/Cmd+Enter`).
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| *Cloudflare rejected the API token* | Token lacks **Account → D1 → Edit**, is for another account, or was revoked. |
+| *D1 database not found* | Check the database name/UUID and that the account ID matches the token's account. |
+| *Missing Cloudflare account ID / API token* | Fill the User and Password fields (not only the URL). |
+| DataGrip schema tree empty or `SQLITE_AUTH` errors | Enable **Introspect using JDBC metadata** in the data source's Options tab. |
+| Driver class not found | Re-add `d1-jdbc.jar` in the driver's library list; make sure the file still exists at that path. |
 
 ## Limitations
 
