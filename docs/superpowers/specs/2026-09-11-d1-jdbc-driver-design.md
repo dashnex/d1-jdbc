@@ -54,6 +54,11 @@ ADD/DROP/RENAME COLUMN, table rebuild for type changes).
   `SQLITE_AUTH`. All metadata queries must filter `sqlite\_%` and `\_cf\_%` names.
 - `PRAGMA foreign_key_list` returns `to = null` when the FK references the parent's implicit PK;
   the driver resolves it to the parent's PK column at the same `seq`.
+- `meta.changes` on a DELETE that fires an `ON DELETE CASCADE` foreign-key action counts the
+  cascade-deleted rows together with the directly targeted row (verified via `/raw`: deleting 1
+  parent with 1 dependent child reports `changes: 2`), unlike stock SQLite's `sqlite3_changes()`,
+  which counts only the outermost statement's rows. `executeUpdate()` reports this combined count
+  as-is since D1 provides no per-table breakdown.
 - Errors: HTTP 401 for bad token; HTTP 404 + code 7404 for unknown database; SQL errors are
   HTTP 4xx/200 with `success:false`, code 7500 and messages like
   `UNIQUE constraint failed: t.e: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)`.
