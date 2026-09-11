@@ -85,6 +85,18 @@ class D1StatementTest {
     }
 
     @Test
+    void cascadingDeleteReportsD1CombinedChangeCount() throws SQLException {
+        // Real D1 response shape observed via /raw for a DELETE that fires ON DELETE CASCADE:
+        // changes counts the cascaded child row together with the directly deleted parent row.
+        // See "Verified D1 behaviour" in the design spec (meta.changes cascade-count bullet).
+        stub.enqueue(ok(empty(2, 1)));
+        try (Statement st = conn.createStatement()) {
+            assertEquals(2, st.executeUpdate("DELETE FROM it_parent WHERE id = 1"));
+            assertFalse(st.getGeneratedKeys().next());
+        }
+    }
+
+    @Test
     void multipleResultsAreExposedInOrder() throws SQLException {
         stub.enqueue(ok(empty(2, 0), result(new String[]{"c"}, new Object[][]{{5}})));
         try (Statement st = conn.createStatement()) {
