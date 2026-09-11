@@ -28,6 +28,15 @@ public final class D1Types {
         return Types.VARCHAR;
     }
 
+    /** Strips a trailing parenthesised size/precision, e.g. "VARCHAR(255)" -&gt; "VARCHAR", "DECIMAL(10,2)" -&gt;
+     * "DECIMAL". Matches sqlite-jdbc's TYPE_NAME, which reports the base type only (COLUMN_SIZE/
+     * DECIMAL_DIGITS carry the numbers separately). */
+    public static String stripSize(String declared) {
+        if (declared == null) return null;
+        int paren = declared.indexOf('(');
+        return (paren >= 0 ? declared.substring(0, paren) : declared).trim();
+    }
+
     public static String typeName(int jdbcType) {
         switch (jdbcType) {
             case Types.BIGINT: return "INTEGER";

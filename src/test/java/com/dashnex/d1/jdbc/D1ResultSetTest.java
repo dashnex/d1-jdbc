@@ -85,7 +85,7 @@ class D1ResultSetTest {
         D1ResultSet rs = D1ResultSet.forQuery(null, sample(), 0, "users", declared);
         ResultSetMetaData md = rs.getMetaData();
         assertEquals("users", md.getTableName(2));
-        assertEquals("VARCHAR(20)", md.getColumnTypeName(2));
+        assertEquals("VARCHAR", md.getColumnTypeName(2)); // F8: TYPE_NAME excludes the declared size
         assertEquals(Types.BOOLEAN, md.getColumnType(5));
         rs.next();
         assertEquals(Boolean.TRUE, rs.getObject("flag"));

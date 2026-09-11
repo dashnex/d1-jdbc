@@ -117,7 +117,7 @@ class D1IntegrationTest {
 
         ResultSet cols = md.getColumns(null, null, "it_child", "note");
         assertTrue(cols.next());
-        assertEquals("VARCHAR(20)", cols.getString("TYPE_NAME"));
+        assertEquals("VARCHAR", cols.getString("TYPE_NAME")); // F8: TYPE_NAME excludes the declared size
         assertEquals("'n/a'", cols.getString("COLUMN_DEF"));
 
         ResultSet pk = md.getPrimaryKeys(null, null, "it_parent");
@@ -158,7 +158,7 @@ class D1IntegrationTest {
             ResultSetMetaData md = rs.getMetaData();
             assertEquals("it_child", md.getTableName(1));
             assertEquals(Types.DOUBLE, md.getColumnType(rs.findColumn("amount")));
-            assertEquals("VARCHAR(20)", md.getColumnTypeName(rs.findColumn("note")));
+            assertEquals("VARCHAR", md.getColumnTypeName(rs.findColumn("note"))); // F8: no declared size
         }
     }
 
