@@ -45,9 +45,11 @@ public class D1Connection implements Connection {
     D1Client client() { return client; }
     D1ConnectionConfig config() { return config; }
 
-    /** Declared column types of a table keyed by lower-case column name; empty if unknown. Cached. */
+    /** Declared column types of a table keyed by lower-case column name; empty if unknown. Cached — but only
+     * on success, so a transient failure (e.g. a network blip) is retried on the next call instead of being
+     * remembered forever as "this table has no columns". */
     Map<String, String> declaredTypes(String table) {
-        return declaredTypesCache.computeIfAbsent(table.toLowerCase(Locale.ROOT), key -> {
+        Map<String, String> cached = declaredTypesCache.computeIfAbsent(table.toLowerCase(Locale.ROOT), key -> {
             try {
                 List<D1Result> results = client.execute("SELECT name, type FROM pragma_table_info(?)", List.of(table));
                 Map<String, String> types = new HashMap<>();
@@ -58,9 +60,10 @@ public class D1Connection implements Connection {
                 }
                 return types;
             } catch (SQLException e) {
-                return Map.of();
+                return null; // do not cache a failed lookup
             }
         });
+        return cached == null ? Map.of() : cached;
     }
 
     void schemaChanged() {
