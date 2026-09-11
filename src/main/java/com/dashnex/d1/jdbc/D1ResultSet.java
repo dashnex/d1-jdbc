@@ -91,11 +91,27 @@ public class D1ResultSet extends ReadOnlyResultSet {
         return new D1ResultSet(statement, columns, rows, new D1ResultSetMetaData(columns, t, typeNames, tables));
     }
 
+    /** Infers a column's JDBC type from every row (not just the first non-null value): D1 serialises a REAL
+     * that happens to be a whole number, e.g. 10.0, as a JSON integer, so a column can mix Long and Double
+     * rows and must still be reported as DOUBLE. */
     private static int inferType(List<Object[]> rows, int column) {
+        boolean sawDouble = false, sawLong = false, sawBlob = false, sawString = false, sawBoolean = false;
         for (Object[] row : rows) {
-            if (row[column] != null) return D1Types.fromValue(row[column]);
+            Object v = row[column];
+            if (v == null) continue;
+            if (v instanceof Double || v instanceof Float) sawDouble = true;
+            else if (v instanceof Boolean) sawBoolean = true;
+            else if (v instanceof Number) sawLong = true;
+            else if (v instanceof byte[]) sawBlob = true;
+            else sawString = true;
         }
-        return Types.VARCHAR;
+        if (sawDouble) return Types.DOUBLE;
+        int distinctKinds = (sawLong ? 1 : 0) + (sawBlob ? 1 : 0) + (sawString ? 1 : 0) + (sawBoolean ? 1 : 0);
+        if (distinctKinds > 1) return Types.VARCHAR;
+        if (sawLong) return Types.BIGINT;
+        if (sawBlob) return Types.BLOB;
+        if (sawBoolean) return Types.BOOLEAN;
+        return Types.VARCHAR; // only strings, or all-null
     }
 
     void closeSilently() {
