@@ -59,6 +59,16 @@ class SqlTextTest {
     }
 
     @Test
+    void ignoresTablesInsideSubqueries() {
+        // F1: a subquery inside WHERE (or a JOIN) must not be mistaken for the FROM table.
+        assertNull(SqlText.singleTable(
+                "SELECT * FROM a JOIN b ON a.id=b.id WHERE a.x IN (SELECT y FROM c WHERE z=1)"));
+        assertNull(SqlText.singleTable("SELECT a.id FROM a, b WHERE a.id IN (SELECT id FROM c WHERE 1)"));
+        assertNull(SqlText.singleTable("SELECT * FROM (SELECT * FROM b WHERE x=1) t"));
+        assertEquals("t", SqlText.singleTable("SELECT * FROM t WHERE id IN (SELECT id FROM u)"));
+    }
+
+    @Test
     void countsParametersOutsideLiteralsAndComments() {
         assertEquals(2, SqlText.countParameters("SELECT * FROM t WHERE a = ? AND b = ?"));
         assertEquals(1, SqlText.countParameters("SELECT '?', \"?\", `?`, [?] -- ?\n, ? /* ? */"));
