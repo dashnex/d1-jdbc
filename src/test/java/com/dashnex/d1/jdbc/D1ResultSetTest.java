@@ -100,6 +100,32 @@ class D1ResultSetTest {
     }
 
     @Test
+    void inferTypeScansAllRowsForMixedNumericColumn() throws SQLException {
+        // F3: D1 serialises REAL 10.0 as JSON 10 (-> Long); must scan all rows, not just the first.
+        List<Object[]> rows = new ArrayList<>();
+        rows.add(new Object[]{10L});
+        rows.add(new Object[]{10.5});
+        D1Result r = new D1Result(List.of("v"), rows, 0, 0);
+        D1ResultSet rs = D1ResultSet.forQuery(null, r, 0, null, null);
+        assertEquals(Types.DOUBLE, rs.getMetaData().getColumnType(1));
+        rs.next();
+        rs.next();
+        assertEquals(10.5, rs.getDouble(1));
+        assertEquals(10.5, rs.getObject(1));
+    }
+
+    @Test
+    void inferTypeRulesForMixedAndNullColumns() throws SQLException {
+        List<Object[]> rows = new ArrayList<>();
+        rows.add(new Object[]{new byte[]{1}, null});
+        rows.add(new Object[]{"x", null});
+        D1Result r = new D1Result(List.of("blobOrStr", "allNull"), rows, 0, 0);
+        ResultSetMetaData md = D1ResultSet.forQuery(null, r, 0, null, null).getMetaData();
+        assertEquals(Types.VARCHAR, md.getColumnType(1)); // blob mixed with string -> VARCHAR
+        assertEquals(Types.VARCHAR, md.getColumnType(2)); // all null -> VARCHAR
+    }
+
+    @Test
     void maxRowsTruncates() throws SQLException {
         ResultSet rs = D1ResultSet.forQuery(null, sample(), 1, null, null);
         assertTrue(rs.next());
