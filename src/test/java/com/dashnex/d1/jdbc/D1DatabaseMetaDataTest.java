@@ -134,7 +134,7 @@ class D1DatabaseMetaDataTest {
         assertTrue(rs.next());
         assertEquals("email", rs.getString("COLUMN_NAME"));
         assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
-        assertEquals("VARCHAR(255)", rs.getString("TYPE_NAME"));
+        assertEquals("VARCHAR", rs.getString("TYPE_NAME")); // F8: TYPE_NAME excludes the declared size
         assertEquals(255, rs.getInt("COLUMN_SIZE"));
         assertEquals(DatabaseMetaData.columnNoNulls, rs.getInt("NULLABLE"));
         assertEquals("NO", rs.getString("IS_AUTOINCREMENT"));
@@ -146,6 +146,7 @@ class D1DatabaseMetaDataTest {
         ResultSet total = md.getColumns(null, null, "orders", "total");
         assertTrue(total.next());
         assertEquals(Types.NUMERIC, total.getInt("DATA_TYPE"));
+        assertEquals("DECIMAL", total.getString("TYPE_NAME")); // F8: TYPE_NAME excludes the declared size
         assertEquals(10, total.getInt("COLUMN_SIZE"));
         assertEquals(2, total.getInt("DECIMAL_DIGITS"));
 

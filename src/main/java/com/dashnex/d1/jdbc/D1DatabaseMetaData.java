@@ -249,7 +249,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
     }
 
     private static String typeName(ColumnRow c, int jdbcType) {
-        return c.type.isEmpty() ? D1Types.typeName(jdbcType) : c.type.toUpperCase(Locale.ROOT);
+        return c.type.isEmpty() ? D1Types.typeName(jdbcType) : D1Types.stripSize(c.type).toUpperCase(Locale.ROOT);
     }
 
     private static boolean sameName(String a, String b) {

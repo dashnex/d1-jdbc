@@ -66,7 +66,9 @@ public class D1ResultSet extends ReadOnlyResultSet {
             String declared = declaredTypes == null ? null : declaredTypes.get(columns.get(i).toLowerCase(Locale.ROOT));
             if (declared != null) {
                 types[i] = D1Types.fromDeclared(declared);
-                typeNames[i] = declared.isBlank() ? D1Types.typeName(types[i]) : declared.trim().toUpperCase(Locale.ROOT);
+                typeNames[i] = declared.isBlank()
+                        ? D1Types.typeName(types[i])
+                        : D1Types.stripSize(declared.trim()).toUpperCase(Locale.ROOT);
                 tables[i] = table;
             } else {
                 types[i] = inferType(rows, i);
