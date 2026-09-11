@@ -31,14 +31,15 @@ class D1DatabaseMetaDataTest {
                         {"orders", "table"}, {"order_summary", "view"}, {"users", "table"}}));
             }
             if (sql.equals(D1DatabaseMetaData.COLUMNS_SQL)) {
-                return ok(result(new String[]{"tbl", "cid", "name", "type", "notnull", "dflt_value", "pk"}, new Object[][]{
-                        {"order_summary", 0, "n", "", 0, null, 0},
-                        {"orders", 0, "id", "INTEGER", 0, null, 1},
-                        {"orders", 1, "user_id", "INTEGER", 1, null, 0},
-                        {"orders", 2, "total", "DECIMAL(10,2)", 0, "0", 0},
-                        {"users", 0, "id", "INTEGER", 0, null, 1},
-                        {"users", 1, "email", "VARCHAR(255)", 1, null, 0},
-                        {"users", 2, "created_at", "DATETIME", 0, "CURRENT_TIMESTAMP", 0}}));
+                return ok(result(new String[]{"tbl", "cid", "name", "type", "notnull", "dflt_value", "pk", "without_rowid"}, new Object[][]{
+                        {"kv", 0, "id", "INTEGER", 0, null, 1, 1},
+                        {"order_summary", 0, "n", "", 0, null, 0, 0},
+                        {"orders", 0, "id", "INTEGER", 0, null, 1, 0},
+                        {"orders", 1, "user_id", "INTEGER", 1, null, 0, 0},
+                        {"orders", 2, "total", "DECIMAL(10,2)", 0, "0", 0, 0},
+                        {"users", 0, "id", "INTEGER", 0, null, 1, 0},
+                        {"users", 1, "email", "VARCHAR(255)", 1, null, 0, 0},
+                        {"users", 2, "created_at", "DATETIME", 0, "CURRENT_TIMESTAMP", 0, 0}}));
             }
             if (sql.equals(D1DatabaseMetaData.FOREIGN_KEYS_SQL)) {
                 return ok(result(new String[]{"name", "id", "seq", "table", "from", "to", "on_update", "on_delete"}, new Object[][]{
@@ -203,6 +204,16 @@ class D1DatabaseMetaDataTest {
         ResultSet rs = md.getBestRowIdentifier(null, null, "users", DatabaseMetaData.bestRowSession, true);
         assertTrue(rs.next());
         assertEquals("id", rs.getString("COLUMN_NAME"));
+        assertFalse(rs.next());
+    }
+
+    @Test
+    void withoutRowidTablesAreNotRowidAliases() throws SQLException {
+        ResultSet rs = md.getColumns(null, null, "kv", null);
+        assertTrue(rs.next());
+        assertEquals("id", rs.getString("COLUMN_NAME"));
+        assertEquals("NO", rs.getString("IS_AUTOINCREMENT"));
+        assertEquals("YES", rs.getString("IS_NULLABLE"));
         assertFalse(rs.next());
     }
 }
