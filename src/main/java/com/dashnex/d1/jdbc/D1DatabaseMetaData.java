@@ -25,7 +25,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
             "m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND m.name NOT LIKE '\\_cf\\_%' ESCAPE '\\'";
     static final String TABLES_SQL = "SELECT m.name, m.type FROM sqlite_master m WHERE m.type IN ('table','view') AND "
             + USER_TABLES + " ORDER BY m.name";
-    static final String COLUMNS_SQL = "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk "
+    static final String COLUMNS_SQL = "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk, (m.sql LIKE '%WITHOUT ROWID%') AS without_rowid "
             + "FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table','view') AND "
             + USER_TABLES + " ORDER BY m.name, p.cid";
     static final String FOREIGN_KEYS_SQL = "SELECT m.name, f.id, f.seq, f.\"table\", f.\"from\", f.\"to\", f.on_update, f.on_delete "
@@ -126,6 +126,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
         final boolean notNull;
         final String defaultValue;
         final int pk;
+        final boolean withoutRowid;
 
         ColumnRow(Object[] r) {
             table = (String) r[0];
@@ -135,6 +136,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
             notNull = D1Values.toLong(r[4]) != 0;
             defaultValue = D1Values.toStr(r[5]);
             pk = (int) D1Values.toLong(r[6]);
+            withoutRowid = D1Values.toLong(r[7]) != 0;
         }
     }
 
@@ -155,7 +157,7 @@ public class D1DatabaseMetaData implements DatabaseMetaData {
     /** A single-column INTEGER PRIMARY KEY is an alias for rowid: auto-assigned and never NULL. */
     private static boolean isRowidAlias(ColumnRow c, Map<String, Integer> pkCounts) {
         return c.pk > 0 && pkCounts.getOrDefault(c.table.toLowerCase(Locale.ROOT), 0) == 1
-                && c.type.equalsIgnoreCase("INTEGER");
+                && c.type.equalsIgnoreCase("INTEGER") && !c.withoutRowid;
     }
 
     private static Integer sizePart(String declared, int group) {
