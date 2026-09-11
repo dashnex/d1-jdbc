@@ -1,0 +1,48 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the driver jar and publish it as a GitHub Release asset.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and run unit tests
+        run: ./gradlew build -PreleaseVersion="${GITHUB_REF_NAME#v}"
+
+      - name: Prepare release assets
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          cp "build/libs/d1-jdbc-${VERSION}-all.jar" "dist/d1-jdbc-${VERSION}.jar"
+          # Stable name so .../releases/latest/download/d1-jdbc.jar always points at the newest release.
+          cp "build/libs/d1-jdbc-${VERSION}-all.jar" dist/d1-jdbc.jar
+          (cd dist && sha256sum *.jar > SHA256SUMS)
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-jdbc-${{ github.ref_name }}
+          path: dist/
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
